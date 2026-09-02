@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.db
+*.sqlite3
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Node.js & React
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+*.log
+
+# AI Model Binaries & Dynamic Data
+yolov8n.pt
+*.pt
+data/uploaded_videos/*
+!data/uploaded_videos/.gitkeep
+data/evidence/*
+!data/evidence/.gitkeep
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+*.swp

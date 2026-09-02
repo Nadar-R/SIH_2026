@@ -1,0 +1,23 @@
+rules:
+  - id: "vf-bop-01"
+    camera_id: "cam-bop-01"
+    name: "Restricted Border Fence Zone"
+    type: "polygon_intrusion"
+    enabled: true
+    object_types:
+      - person
+      - car
+      - motorcycle
+      - bus
+      - truck
+      - bicycle
+    # Polygon normalized [x, y] coordinates (0.0 to 1.0) on frame canvas
+    polygon:
+      - [0.15, 0.20]
+      - [0.85, 0.20]
+      - [0.90, 0.85]
+      - [0.10, 0.85]
+    min_confidence: 0.40
+    min_frames: 2
+    cooldown_seconds: 5
+    severity: "HIGH"

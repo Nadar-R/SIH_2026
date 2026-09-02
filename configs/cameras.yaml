@@ -1,0 +1,7 @@
+cameras:
+  - id: "cam-bop-01"
+    name: "Border Outpost Gate 1"
+    source: 0  # Default to USB Webcam index 0 (can also be a file path or RTSP URL)
+    location: "Sector Alpha - Main Gate"
+    inference_fps: 15
+    enabled: true

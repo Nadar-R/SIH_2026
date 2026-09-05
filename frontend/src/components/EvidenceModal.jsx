@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, CheckCircle, Download, ShieldAlert } from 'lucide-react';
+import { X, CheckCircle, Download, ShieldAlert, CreditCard } from 'lucide-react';
 
 export default function EvidenceModal({ event, onClose, onAcknowledge }) {
   if (!event) return null;
@@ -40,7 +40,7 @@ export default function EvidenceModal({ event, onClose, onAcknowledge }) {
         </div>
 
         {/* Event Metadata Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800 font-mono text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800 font-mono text-xs">
           <div>
             <span className="text-slate-400 block text-[11px]">DATE & TIME</span>
             <span className="text-white font-semibold">{dateStr}</span>
@@ -49,6 +49,11 @@ export default function EvidenceModal({ event, onClose, onAcknowledge }) {
           <div>
             <span className="text-slate-400 block text-[11px]">OBJECT CLASS</span>
             <span className="text-cyan-400 font-semibold uppercase">{event.object_type} #{event.track_id}</span>
+          </div>
+
+          <div>
+            <span className="text-slate-400 block text-[11px]">LICENSE PLATE</span>
+            <span className="text-amber-400 font-bold uppercase">{event.license_plate || "N/A"}</span>
           </div>
 
           <div>

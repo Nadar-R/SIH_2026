@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
 
+from sqlalchemy import text
 from backend.app.db.session import engine, Base, SessionLocal
 from backend.app.db.models import CameraModel, ZoneModel, EventModel
 from backend.app.api.endpoints import router as api_router, set_pipeline
@@ -45,7 +46,7 @@ EVIDENCE_DIR = os.path.join(ROOT_DIR, "data", "evidence")
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 app.mount("/evidence", StaticFiles(directory=EVIDENCE_DIR), name="evidence")
 
-pipeline: VisionPipeline = None
+main_loop = None
 
 def handle_vision_event(event_data: dict, annotated_frame):
     db: Session = SessionLocal()
@@ -63,7 +64,8 @@ def handle_vision_event(event_data: dict, annotated_frame):
             confidence=event_data.get("confidence", 0.0),
             evidence_uri=event_data.get("evidence_uri", ""),
             severity=event_data.get("severity", "HIGH"),
-            status="NEW"
+            status="NEW",
+            license_plate=event_data.get("license_plate")
         )
         db.add(db_event)
         db.commit()
@@ -82,13 +84,13 @@ def handle_vision_event(event_data: dict, annotated_frame):
                 "confidence": db_event.confidence,
                 "evidence_uri": db_event.evidence_uri,
                 "severity": db_event.severity,
-                "status": db_event.status
+                "status": db_event.status,
+                "license_plate": db_event.license_plate
             }
         }
         
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.run_coroutine_threadsafe(ws_manager.broadcast_event(ws_payload), loop)
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(ws_manager.broadcast_event(ws_payload), main_loop)
 
     except Exception as e:
         logger.error(f"Error persisting vision event to DB: {e}")
@@ -97,6 +99,14 @@ def handle_vision_event(event_data: dict, annotated_frame):
 
 def load_initial_configs():
     Base.metadata.create_all(bind=engine)
+
+    # Automatic SQLite schema migration for license_plate column
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE events ADD COLUMN license_plate TEXT;"))
+            conn.commit()
+        except Exception:
+            pass
     db: Session = SessionLocal()
     try:
         cam = db.query(CameraModel).filter(CameraModel.id == "cam-bop-01").first()
@@ -110,26 +120,13 @@ def load_initial_configs():
                 enabled=True
             )
             db.add(cam)
+        else:
+            # Reset camera source to default system webcam "0" on every backend launch
+            cam.source = "0"
+            cam.status = "ONLINE"
 
-        zones = db.query(ZoneModel).all()
-        if not zones:
-            rules_path = os.path.join(ROOT_DIR, "configs", "rules.yaml")
-            if os.path.exists(rules_path):
-                with open(rules_path, "r") as f:
-                    cfg = yaml.safe_load(f)
-                    for r in cfg.get("rules", []):
-                        z = ZoneModel(
-                            id=r["id"],
-                            camera_id=r.get("camera_id", "cam-bop-01"),
-                            name=r.get("name", "Restricted Border Fence Zone"),
-                            polygon_json=json.dumps(r.get("polygon", [])),
-                            min_confidence=r.get("min_confidence", 0.40),
-                            min_frames=r.get("min_frames", 2),
-                            cooldown_seconds=r.get("cooldown_seconds", 5),
-                            severity=r.get("severity", "HIGH"),
-                            enabled=r.get("enabled", True)
-                        )
-                        db.add(z)
+        # Clean startup: Clear lingering previous session zones so user starts with clean canvas
+        db.query(ZoneModel).delete()
         db.commit()
 
         active_zones = db.query(ZoneModel).filter(ZoneModel.enabled == True).all()
@@ -156,7 +153,8 @@ def load_initial_configs():
 
 @app.on_event("startup")
 def startup_event():
-    global pipeline
+    global pipeline, main_loop
+    main_loop = asyncio.get_running_loop()
     logger.info("Initializing IBVAP Backend & Vision Analytics Engine...")
     rules_config, initial_source = load_initial_configs()
 

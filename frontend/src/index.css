@@ -6,6 +6,8 @@
   --bg-main: #0B0F19;
   --bg-card: rgba(15, 23, 42, 0.8);
   --border-card: rgba(255, 255, 255, 0.1);
+  --text-main: #F1F5F9;
+  --text-muted: #94A3B8;
   --accent-cyan: #00F2FE;
   --accent-blue: #4FACFE;
   --alert-crimson: #FF2A6D;
@@ -13,14 +15,23 @@
   --status-green: #00E676;
 }
 
+html.light {
+  --bg-main: #F8FAFC;
+  --bg-card: #FFFFFF;
+  --border-card: rgba(203, 213, 225, 0.8);
+  --text-main: #0F172A;
+  --text-muted: #64748B;
+}
+
 body {
-  background-color: #0B0F19 !important;
-  color: #F1F5F9 !important;
+  background-color: var(--bg-main) !important;
+  color: var(--text-main) !important;
   font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
   min-height: 100vh;
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 h1, h2, h3, h4, .font-heading {
@@ -33,11 +44,25 @@ h1, h2, h3, h4, .font-heading {
 
 /* Fallback Glassmorphism Card Styling */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.8) !important;
+  background: var(--bg-card) !important;
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5) !important;
+  border: 1px solid var(--border-card) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1) !important;
+}
+
+html.light .glass-panel {
+  background: #FFFFFF !important;
+  border: 1px solid #E2E8F0 !important;
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.05) !important;
+  color: #0F172A !important;
+}
+
+html.light .glass-panel-glow {
+  background: #FFFFFF !important;
+  border: 1px solid #0284C7 !important;
+  box-shadow: 0 0 20px rgba(2, 132, 199, 0.15) !important;
+  color: #0F172A !important;
 }
 
 .glass-panel-glow {
@@ -45,6 +70,45 @@ h1, h2, h3, h4, .font-heading {
   backdrop-filter: blur(16px) !important;
   border: 1px solid rgba(0, 242, 254, 0.3) !important;
   box-shadow: 0 0 25px rgba(0, 242, 254, 0.15) !important;
+}
+
+/* Light mode specific element overrides */
+html.light .bg-slate-950,
+html.light .bg-slate-900,
+html.light .bg-\[\#0B0F19\] {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+}
+
+html.light .bg-slate-900\/60,
+html.light .bg-slate-950\/70,
+html.light .bg-slate-900\/70 {
+  background-color: #F1F5F9 !important;
+  color: #0F172A !important;
+}
+
+html.light .text-slate-100,
+html.light .text-slate-200,
+html.light .text-white {
+  color: #0F172A !important;
+}
+
+html.light .text-slate-400,
+html.light .text-slate-500 {
+  color: #475569 !important;
+}
+
+html.light .border-slate-800,
+html.light .border-slate-900,
+html.light .border-slate-800\/80,
+html.light .border-slate-800\/60 {
+  border-color: #E2E8F0 !important;
+}
+
+html.light input, html.light select, html.light textarea {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+  border-color: #CBD5E1 !important;
 }
 
 /* Custom Scrollbar */
@@ -55,9 +119,15 @@ h1, h2, h3, h4, .font-heading {
 ::-webkit-scrollbar-track {
   background: rgba(15, 23, 42, 0.6);
 }
+html.light ::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
 ::-webkit-scrollbar-thumb {
   background: rgba(0, 242, 254, 0.25);
   border-radius: 4px;
+}
+html.light ::-webkit-scrollbar-thumb {
+  background: #94A3B8;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 242, 254, 0.5);

@@ -4,7 +4,7 @@ import time
 import shutil
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
@@ -290,3 +290,47 @@ def acknowledge_event(event_id: str, req: EventAckRequest = EventAckRequest(), d
     db.commit()
     db.refresh(evt)
     return evt
+
+# Whitelisted Staff Face Profiles Endpoints
+@router.get("/faces/whitelist")
+def get_whitelisted_faces():
+    if not pipeline_instance or not hasattr(pipeline_instance, 'face_engine'):
+        return []
+    return pipeline_instance.face_engine.whitelisted_faces
+
+@router.post("/faces/whitelist")
+async def add_whitelisted_face(
+    person_name: str = Form(...),
+    role: str = Form("Border Patrol Officer"),
+    file: UploadFile = File(...)
+):
+    if not pipeline_instance or not hasattr(pipeline_instance, 'face_engine'):
+        raise HTTPException(status_code=500, detail="Face recognition engine is not initialized.")
+
+    try:
+        contents = await file.read()
+        profile = pipeline_instance.face_engine.add_whitelisted_person(
+            person_name=person_name,
+            role=role,
+            image_bytes=contents
+        )
+        if hasattr(pipeline_instance, 'clear_face_cache'):
+            pipeline_instance.clear_face_cache()
+        return {"status": "SUCCESS", "profile": profile}
+    except Exception as e:
+        logger.error(f"Error registering face profile: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.delete("/faces/whitelist/{face_id}")
+def delete_whitelisted_face(face_id: str):
+    if not pipeline_instance or not hasattr(pipeline_instance, 'face_engine'):
+        raise HTTPException(status_code=500, detail="Face recognition engine is not initialized.")
+
+    success = pipeline_instance.face_engine.remove_whitelisted_person(face_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Face profile not found.")
+
+    if hasattr(pipeline_instance, 'clear_face_cache'):
+        pipeline_instance.clear_face_cache()
+
+    return {"status": "SUCCESS", "deleted_face_id": face_id}

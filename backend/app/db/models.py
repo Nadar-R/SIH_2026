@@ -43,6 +43,7 @@ class EventModel(Base):
     severity = Column(String, default="HIGH")
     status = Column(String, default="NEW")
     acknowledged_by = Column(String, nullable=True)
+    license_plate = Column(String, nullable=True)
 
 class MetricModel(Base):
     __tablename__ = "system_metrics"

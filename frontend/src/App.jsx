@@ -5,6 +5,7 @@ import ZoneDrawerTab from './components/ZoneDrawerTab';
 import CameraSourcesTab from './components/CameraSourcesTab';
 import EventLogsTab from './components/EventLogsTab';
 import EvidenceModal from './components/EvidenceModal';
+import WhitelistManagerModal from './components/WhitelistManagerModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('monitoring');
@@ -13,8 +14,29 @@ export default function App() {
   const [events, setEvents] = useState([]);
   const [activeAlerts, setActiveAlerts] = useState([]);
   const [selectedEvidenceEvent, setSelectedEvidenceEvent] = useState(null);
-
+  const [showWhitelistModal, setShowWhitelistModal] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
+
+  // Dark/Light Theme mode state
+  const [theme, setTheme] = useState(() => {
+    return localStorage.getItem('ibvap_theme') || 'dark';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('ibvap_theme', theme);
+    if (theme === 'light') {
+      document.documentElement.classList.add('light');
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light');
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
   const wsRef = useRef(null);
 
   const playAlertSound = () => {
@@ -56,7 +78,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-    const timer = setInterval(fetchData, 1000); // Polling health telemetry every 1s for smooth seek bar & FPS
+    const timer = setInterval(fetchData, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -175,13 +197,18 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0B0F19] text-slate-100 font-sans antialiased">
+    <div className={`min-h-screen flex flex-col font-sans antialiased transition-colors duration-300 ${
+      theme === 'light' ? 'bg-slate-50 text-slate-900' : 'bg-[#0B0F19] text-slate-100'
+    }`}>
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         health={health}
         audioEnabled={audioEnabled}
         toggleAudio={() => setAudioEnabled(!audioEnabled)}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        onOpenWhitelistModal={() => setShowWhitelistModal(true)}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
@@ -195,6 +222,7 @@ export default function App() {
             onPlayPause={handlePlayPause}
             onSeek={handleSeek}
             onGoToZoneDrawer={() => setActiveTab('zone_drawer')}
+            onOpenWhitelistModal={() => setShowWhitelistModal(true)}
           />
         )}
 
@@ -229,7 +257,12 @@ export default function App() {
         onAcknowledge={handleAcknowledge}
       />
 
-      <footer className="w-full border-t border-slate-900 py-4 px-6 text-center text-xs font-mono text-slate-500">
+      <WhitelistManagerModal
+        isOpen={showWhitelistModal}
+        onClose={() => setShowWhitelistModal(false)}
+      />
+
+      <footer className="w-full border-t border-slate-200 dark:border-slate-900 py-4 px-6 text-center text-xs font-mono text-slate-500">
         IBVAP &copy; 2026 Intelligent Border Video Analytics Platform | SIH 2026 Software-Defined Surveillance Layer
       </footer>
     </div>

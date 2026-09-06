@@ -14,7 +14,17 @@ export default function LiveMonitoringTab({
   onOpenWhitelistModal
 }) {
   const [streamKey, setStreamKey] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const containerRef = useRef(null);
+
+  const handleStreamError = () => {
+    if (retryCount < 5) {
+      setTimeout(() => {
+        setStreamKey(k => k + 1);
+        setRetryCount(r => r + 1);
+      }, 3000);
+    }
+  };
 
   const isOnline = health?.camera_status === 'ONLINE';
   const videoMode = health?.playback?.video_mode || 'webcam';
@@ -143,10 +153,10 @@ export default function LiveMonitoringTab({
               {isOnline ? (
                 <img
                   key={streamKey}
-                  src={`/video_feed?key=${streamKey}`}
+                  src={window.location.port === '3000' ? `http://${window.location.hostname}:8000/video_feed?key=${streamKey}` : `/video_feed?key=${streamKey}`}
                   alt="IBVAP Live AI CCTV Stream"
                   className="w-full h-full object-contain max-h-[640px]"
-                  onError={() => setTimeout(() => setStreamKey(k => k + 1), 2000)}
+                  onError={handleStreamError}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
@@ -158,7 +168,7 @@ export default function LiveMonitoringTab({
                     Unable to connect to camera source. Verify URL or device index in Camera Sources tab.
                   </p>
                   <button
-                    onClick={() => setStreamKey(k => k + 1)}
+                    onClick={() => { setRetryCount(0); setStreamKey(k => k + 1); }}
                     className="mt-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20 rounded-xl text-xs font-mono font-bold transition-all"
                   >
                     RECONNECT STREAM

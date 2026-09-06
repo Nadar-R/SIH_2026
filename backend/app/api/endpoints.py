@@ -102,7 +102,7 @@ def switch_camera_source(req: SourceSwitchRequest, db: Session = Depends(get_db)
 
     # Validate if OpenCV successfully opened the requested stream URL
     parsed_req = pipeline_instance.stream._parse_source(req.source)
-    if pipeline_instance.stream.source != parsed_req:
+    if not success or pipeline_instance.stream.source != parsed_req:
         logger.warning(f"Failed to connect to stream '{req.source}'. Reverted to webcam 0.")
         raise HTTPException(
             status_code=400,

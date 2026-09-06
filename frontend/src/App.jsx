@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Navbar from './components/Navbar';
 import LiveMonitoringTab from './components/LiveMonitoringTab';
 import ZoneDrawerTab from './components/ZoneDrawerTab';
@@ -16,6 +16,7 @@ export default function App() {
   const [selectedEvidenceEvent, setSelectedEvidenceEvent] = useState(null);
   const [showWhitelistModal, setShowWhitelistModal] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const audioEnabledRef = useRef(audioEnabled);
 
   // Dark/Light Theme mode state
   const [theme, setTheme] = useState(() => {
@@ -39,8 +40,16 @@ export default function App() {
 
   const wsRef = useRef(null);
 
-  const playAlertSound = () => {
-    if (!audioEnabled) return;
+  const toggleAudio = useCallback(() => {
+    setAudioEnabled(prev => {
+      const next = !prev;
+      audioEnabledRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const playAlertSound = useCallback(() => {
+    if (!audioEnabledRef.current) return;
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = ctx.createOscillator();
@@ -57,7 +66,7 @@ export default function App() {
     } catch (e) {
       console.warn("Audio playback context error:", e);
     }
-  };
+  }, []);
 
   const fetchData = async () => {
     try {
@@ -78,7 +87,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
-    const timer = setInterval(fetchData, 1000);
+    const timer = setInterval(fetchData, 2000);
     return () => clearInterval(timer);
   }, []);
 
@@ -118,7 +127,7 @@ export default function App() {
     return () => {
       if (wsRef.current) wsRef.current.close();
     };
-  }, [audioEnabled]);
+  }, []);
 
   const handleSwitchSource = async (newSource) => {
     const res = await fetch('/api/v1/cameras/switch', {
@@ -205,7 +214,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         health={health}
         audioEnabled={audioEnabled}
-        toggleAudio={() => setAudioEnabled(!audioEnabled)}
+        toggleAudio={toggleAudio}
         theme={theme}
         toggleTheme={toggleTheme}
         onOpenWhitelistModal={() => setShowWhitelistModal(true)}

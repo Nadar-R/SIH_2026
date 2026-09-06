@@ -55,16 +55,20 @@ class VisionPipeline:
         self.face_engine = FaceEngine()
 
         # Asynchronous Worker Pools for Non-Blocking Heavy Inference
-        self.anpr_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ANPR_Worker")
-        self.face_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="Face_Worker")
+        self.anpr_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ANPR_Worker")
+        self.face_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="Face_Worker")
+        self.event_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="Event_Worker")
         self.pending_anpr_tracks = set()
         self.pending_face_tracks = set()
 
         self.plate_history: Dict[int, List[str]] = {}
         self.whitelisted_tracks: Dict[int, str] = {}
+        self.track_first_seen: Dict[int, float] = {}
 
+        self.frame_lock = threading.Lock()
         self.latest_frame: Optional[np.ndarray] = None
         self.annotated_frame: Optional[np.ndarray] = None
+        self.latest_jpeg_bytes: Optional[bytes] = None
         self.latest_detections: List[Dict[str, Any]] = []
         self.latest_tracks: List[Dict[str, Any]] = []
         self.latest_events: List[Dict[str, Any]] = []
@@ -72,11 +76,11 @@ class VisionPipeline:
 
         self.current_fps: float = 0.0
         self.inference_latency_ms: float = 0.0
-        self.is_running: bool = False
-        self.thread: Optional[threading.Thread] = None
 
+        self.thread: Optional[threading.Thread] = None
+        self.is_running = False
         self.frame_index = 0
-        self.infer_stride = 2
+        self.infer_stride = 3
 
     def start(self):
         if self.is_running:
@@ -94,13 +98,14 @@ class VisionPipeline:
             self.thread.join(timeout=2.0)
         self.anpr_pool.shutdown(wait=False)
         self.face_pool.shutdown(wait=False)
+        self.event_pool.shutdown(wait=False)
         self.stream.release()
         logger.info("Vision Pipeline stopped.")
 
-    def update_source(self, new_source: Any):
+    def update_source(self, new_source: Any) -> bool:
         logger.info(f"Pipeline updating video source to: {new_source}")
         self.source = new_source
-        self.stream.change_source(new_source)
+        return self.stream.change_source(new_source)
 
     def update_rules(self, rules_config: List[Dict[str, Any]]):
         self.rule_engine.update_rules(rules_config)
@@ -138,9 +143,7 @@ class VisionPipeline:
         try:
             plate_str = self.anpr_engine.extract_license_plate(crop)
             if plate_str:
-                if track_id not in self.plate_history:
-                    self.plate_history[track_id] = []
-                self.plate_history[track_id].append(plate_str)
+                self.plate_history.setdefault(track_id, []).append(plate_str)
         except Exception as e:
             logger.error(f"Error in async ANPR worker: {e}")
         finally:
@@ -157,130 +160,161 @@ class VisionPipeline:
         finally:
             self.pending_face_tracks.discard(track_id)
 
+    def _async_save_evidence(self, evt: Dict[str, Any], frame_copy: np.ndarray):
+        """Asynchronously writes evidence image to disk and calls DB event callback without stalling capture loop."""
+        try:
+            evidence_filename = f"{evt['event_id']}.jpg"
+            evidence_path = os.path.join(self.evidence_dir, evidence_filename)
+            cv2.imwrite(evidence_path, frame_copy)
+            if self.event_callback:
+                self.event_callback(evt, frame_copy)
+        except Exception as ex:
+            logger.error(f"Error asynchronously saving evidence or executing callback: {ex}")
+
     def _run_loop(self):
-        prev_time = time.time()
-
         while self.is_running:
-            start_t = time.time()
-            ret, frame = self.stream.read_frame()
+            try:
+                start_t = time.time()
+                ret, frame = self.stream.read_frame()
 
-            if not ret or frame is None:
-                time.sleep(0.02)
-                continue
+                if not ret or frame is None:
+                    time.sleep(0.02)
+                    continue
 
-            self.latest_frame = frame.copy()
-            h, w = frame.shape[:2]
-            self.frame_index += 1
+                self.latest_frame = frame
+                h, w = frame.shape[:2]
+                self.frame_index += 1
 
-            if self.frame_index % self.infer_stride == 0 or not self.latest_detections:
-                det_start = time.time()
-                detections = self.detector.detect(frame)
-                self.latest_detections = detections
-                det_end = time.time()
-                self.inference_latency_ms = round((det_end - det_start) * 1000.0, 1)
-            else:
-                detections = self.latest_detections
+                if self.frame_index % self.infer_stride == 0 or not self.latest_detections:
+                    det_start = time.time()
+                    detections = self.detector.detect(frame)
+                    self.latest_detections = detections
+                    det_end = time.time()
+                    self.inference_latency_ms = round((det_end - det_start) * 1000.0, 1)
+                else:
+                    detections = self.latest_detections
 
-            tracked = self.tracker.update(detections, frame.shape)
-            self.latest_tracks = tracked
+                tracked = self.tracker.update(detections, frame.shape)
+                self.latest_tracks = tracked
 
-            # Calculate entity breakdown counts
-            counts: Dict[str, int] = {}
-            active_track_ids = set()
+                # Calculate entity breakdown counts & track lifetime
+                counts: Dict[str, int] = {}
+                active_track_ids = set()
 
-            for obj in tracked:
-                track_id = obj["track_id"]
-                cname = obj.get("class_name", "object")
-                bbox = obj["bbox"]
-                counts[cname] = counts.get(cname, 0) + 1
-                active_track_ids.add(track_id)
+                for obj in tracked:
+                    track_id = obj["track_id"]
+                    cname = obj.get("class_name", "object")
+                    bbox = obj["bbox"]
+                    counts[cname] = counts.get(cname, 0) + 1
+                    active_track_ids.add(track_id)
+                    if track_id not in self.track_first_seen:
+                        self.track_first_seen[track_id] = time.time()
 
-                # Process ANPR for vehicles asynchronously (Non-Blocking)
-                if cname in ["car", "motorcycle", "bus", "truck"]:
-                    if track_id not in self.pending_anpr_tracks and (track_id not in self.plate_history or len(self.plate_history[track_id]) < 3):
-                        crop = self._crop_object(frame, bbox)
-                        if crop is not None:
-                            self.pending_anpr_tracks.add(track_id)
-                            self.anpr_pool.submit(self._async_extract_plate, track_id, crop.copy())
+                    # Process ANPR for vehicles asynchronously (Non-Blocking)
+                    # Throttled: only submit every 15th frame AND only if pool has capacity
+                    if cname in ["car", "motorcycle", "bus", "truck"]:
+                        if (self.frame_index % 15 == 0
+                                and track_id not in self.pending_anpr_tracks
+                                and len(self.plate_history.get(track_id, [])) < 3
+                                and self.anpr_pool._work_queue.qsize() < 2):
+                            crop = self._crop_object(frame, bbox)
+                            if crop is not None:
+                                self.pending_anpr_tracks.add(track_id)
+                                self.anpr_pool.submit(self._async_extract_plate, track_id, crop.copy())
 
-                # Process Whitelist Face Detection for persons asynchronously (Non-Blocking)
-                elif cname == "person":
-                    if track_id not in self.whitelisted_tracks and track_id not in self.pending_face_tracks:
-                        crop = self._crop_object(frame, bbox)
-                        if crop is not None:
-                            self.pending_face_tracks.add(track_id)
-                            self.face_pool.submit(self._async_detect_face, track_id, crop.copy())
+                    # Process Whitelist Face Detection for persons asynchronously (Non-Blocking)
+                    # Throttled: only submit every 10th frame AND only if pool has capacity
+                    elif cname == "person":
+                        if (self.frame_index % 10 == 0
+                                and track_id not in self.whitelisted_tracks
+                                and track_id not in self.pending_face_tracks
+                                and self.face_pool._work_queue.qsize() < 2):
+                            crop = self._crop_object(frame, bbox)
+                            if crop is not None:
+                                self.pending_face_tracks.add(track_id)
+                                self.face_pool.submit(self._async_detect_face, track_id, crop.copy())
 
-            self.entity_counts = counts
+                self.entity_counts = counts
 
-            # Active whitelisted names in database
-            active_whitelisted_names = {f["name"] for f in self.face_engine.whitelisted_faces}
+                # Active whitelisted names in database
+                active_whitelisted_names = {f["name"] for f in self.face_engine.whitelisted_faces}
 
-            # Clean up stale track histories or deleted whitelist profiles
-            for tid in list(self.plate_history.keys()):
-                if tid not in active_track_ids:
-                    del self.plate_history[tid]
-            for tid in list(self.whitelisted_tracks.keys()):
-                if tid not in active_track_ids or self.whitelisted_tracks[tid] not in active_whitelisted_names:
-                    del self.whitelisted_tracks[tid]
+                # Clean up stale track histories or deleted whitelist profiles
+                for tid in list(self.plate_history.keys()):
+                    if tid not in active_track_ids:
+                        self.plate_history.pop(tid, None)
+                for tid in list(self.whitelisted_tracks.keys()):
+                    if tid not in active_track_ids or self.whitelisted_tracks.get(tid) not in active_whitelisted_names:
+                        self.whitelisted_tracks.pop(tid, None)
+                for tid in list(self.track_first_seen.keys()):
+                    if tid not in active_track_ids:
+                        self.track_first_seen.pop(tid, None)
 
-            # Evaluate virtual fence rules
-            events = self.rule_engine.evaluate(tracked, w, h)
-            valid_events = []
+                # Evaluate virtual fence rules
+                events = self.rule_engine.evaluate(tracked, w, h)
+                valid_events = []
 
-            for evt in events:
-                tid = evt["track_id"]
-                cname = evt["object_type"]
+                for evt in events:
+                    tid = evt["track_id"]
+                    cname = evt["object_type"]
 
-                # 1. Check if person is whitelisted familiar staff
-                if cname == "person" and tid in self.whitelisted_tracks:
-                    staff_name = self.whitelisted_tracks[tid]
-                    if staff_name in active_whitelisted_names:
-                        logger.info(f"Intrusion alarm suppressed for whitelisted staff: '{staff_name}' (Track #{tid})")
-                        continue
+                    # 1. Check if person is whitelisted familiar staff
+                    if cname == "person":
+                        if tid in self.whitelisted_tracks:
+                            staff_name = self.whitelisted_tracks.get(tid)
+                            if staff_name in active_whitelisted_names:
+                                logger.info(f"Intrusion alarm suppressed for whitelisted staff: '{staff_name}' (Track #{tid})")
+                                continue
+                            else:
+                                self.whitelisted_tracks.pop(tid, None)
+
+                        # Grace period: Allow 1.5s for async face recognition to identify familiar staff before alarming
+                        track_age = time.time() - self.track_first_seen.get(tid, time.time())
+                        if track_age < 1.5 and len(self.face_engine.whitelisted_faces) > 0:
+                            continue
+
+                    # 2. Attach majority-voted license plate for vehicles
+                    if cname in ["car", "motorcycle", "bus", "truck"]:
+                        plates = self.plate_history.get(tid, [])
+                        if plates:
+                            most_common_plate = Counter(plates).most_common(1)[0][0]
+                            evt["license_plate"] = most_common_plate
+
+                    valid_events.append(evt)
+
+                self.latest_events = valid_events
+
+                # Render canvas overlay
+                annotated = self._render_overlay(frame, tracked, w, h)
+                ret, jpeg = cv2.imencode('.jpg', annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                with self.frame_lock:
+                    self.annotated_frame = annotated
+                    if ret:
+                        self.latest_jpeg_bytes = jpeg.tobytes()
+
+                # Dispatch evidence file saving and DB callbacks to background worker pool
+                if valid_events and self.event_callback:
+                    for evt in valid_events:
+                        evt_id = f"evt_{int(time.time()*1000)}_{evt['track_id']}"
+                        evt["event_id"] = evt_id
+                        evt["evidence_uri"] = f"/evidence/{evt_id}.jpg"
+                        self.event_pool.submit(self._async_save_evidence, evt.copy(), annotated.copy())
+
+                target_dt = 1.0 / max(self.stream.target_fps, 1)
+                elapsed = time.time() - start_t
+                if elapsed < target_dt:
+                    time.sleep(target_dt - elapsed)
+
+                total_loop_t = time.time() - start_t
+                if total_loop_t > 0:
+                    instant_fps = 1.0 / total_loop_t
+                    if self.current_fps <= 0.0:
+                        self.current_fps = round(instant_fps, 1)
                     else:
-                        del self.whitelisted_tracks[tid]
-
-                # 2. Attach majority-voted license plate for vehicles
-                if cname in ["car", "motorcycle", "bus", "truck"] and tid in self.plate_history:
-                    plates = self.plate_history[tid]
-                    if plates:
-                        most_common_plate = Counter(plates).most_common(1)[0][0]
-                        evt["license_plate"] = most_common_plate
-
-                valid_events.append(evt)
-
-            self.latest_events = valid_events
-
-            # Render canvas overlay
-            annotated = self._render_overlay(frame, tracked, w, h)
-            self.annotated_frame = annotated
-
-            if valid_events and self.event_callback:
-                for evt in valid_events:
-                    evt_id = f"evt_{int(time.time()*1000)}_{evt['track_id']}"
-                    evidence_filename = f"{evt_id}.jpg"
-                    evidence_path = os.path.join(self.evidence_dir, evidence_filename)
-                    cv2.imwrite(evidence_path, annotated)
-                    
-                    evt["event_id"] = evt_id
-                    evt["evidence_uri"] = f"/evidence/{evidence_filename}"
-
-                    try:
-                        self.event_callback(evt, annotated)
-                    except Exception as ex:
-                        logger.error(f"Error executing event callback: {ex}")
-
-            curr_time = time.time()
-            dt = curr_time - prev_time
-            prev_time = curr_time
-            if dt > 0:
-                self.current_fps = round(1.0 / dt, 1)
-
-            target_dt = 1.0 / max(self.stream.target_fps, 1)
-            elapsed = time.time() - start_t
-            if elapsed < target_dt:
-                time.sleep(target_dt - elapsed)
+                        self.current_fps = round(0.85 * self.current_fps + 0.15 * instant_fps, 1)
+            except Exception as loop_ex:
+                logger.error(f"Unexpected error in pipeline loop iteration: {loop_ex}", exc_info=True)
+                time.sleep(0.04)
 
     def _render_overlay(self, frame: np.ndarray, tracked: List[Dict[str, Any]], w: int, h: int) -> np.ndarray:
         canvas = frame.copy()
@@ -323,15 +357,16 @@ class VisionPipeline:
             # Custom styling for whitelisted personnel or plate recognition
             if track_id in self.whitelisted_tracks:
                 color = (0, 230, 118) # Emerald green for authorized staff
-                staff_name = self.whitelisted_tracks[track_id]
-                label = f"#{track_id} STAFF: {staff_name.upper()}"
+                staff_name = self.whitelisted_tracks.get(track_id, "STAFF")
+                label = f"#{track_id} STAFF: {str(staff_name).upper()}"
             else:
                 color = CLASS_COLORS.get(class_name, (0, 255, 0))
                 label = f"#{track_id} {class_name.upper()} {int(conf*100)}%"
 
                 # Attach ANPR license plate label if available
-                if track_id in self.plate_history and self.plate_history[track_id]:
-                    best_plate = Counter(self.plate_history[track_id]).most_common(1)[0][0]
+                plates = self.plate_history.get(track_id, [])
+                if plates:
+                    best_plate = Counter(plates).most_common(1)[0][0]
                     label += f" | PLATE: {best_plate}"
 
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
@@ -348,7 +383,5 @@ class VisionPipeline:
         return canvas
 
     def get_encoded_mjpeg_frame(self) -> Optional[bytes]:
-        if self.annotated_frame is None:
-            return None
-        ret, jpeg = cv2.imencode('.jpg', self.annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-        return jpeg.tobytes() if ret else None
+        with self.frame_lock:
+            return self.latest_jpeg_bytes

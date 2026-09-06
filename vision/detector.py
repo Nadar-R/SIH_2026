@@ -29,7 +29,6 @@ class ObjectDetector:
         self.model_name = model_name
         self.conf_threshold = conf_threshold
         self.model = None
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         self._load_model()
 
     def _load_model(self):
@@ -50,11 +49,6 @@ class ObjectDetector:
             return []
 
         try:
-            # 1. Preprocessing for shadowy streets & low-contrast pedestrians
-            # Apply subtle luminance enhancement to bring out human contours in non-standard clothing (sarees/dupattas)
-            h, w = frame.shape[:2]
-            
-            # Predict directly on high-resolution frame
             results = self.model.predict(
                 source=frame,
                 conf=self.conf_threshold,

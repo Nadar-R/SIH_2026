@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Edit3, Plus, Trash2, Check, Undo, Shield, Info, AlertTriangle } from 'lucide-react';
+import { Edit3, Plus, Trash2, Check, Undo, Shield, Info, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function ZoneDrawerTab({ activeZones, onSaveZone, onDeleteZone }) {
   const canvasRef = useRef(null);
   const [points, setPoints] = useState([]);
+  const [snapshotTime, setSnapshotTime] = useState(() => Date.now());
   const [zoneName, setZoneName] = useState('Restricted Border Zone');
   const [minConfidence, setMinConfidence] = useState(0.40);
   const [cooldownSeconds, setCooldownSeconds] = useState(5);
@@ -153,7 +154,7 @@ export default function ZoneDrawerTab({ activeZones, onSaveZone, onDeleteZone })
 
           <div className="relative w-full aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-700 shadow-inner flex items-center justify-center">
             <img
-              src="/video_feed"
+              src={`/api/v1/snapshot?t=${snapshotTime}`}
               alt="Camera Frame Reference"
               className="absolute inset-0 w-full h-full object-cover opacity-60"
             />
@@ -170,6 +171,15 @@ export default function ZoneDrawerTab({ activeZones, onSaveZone, onDeleteZone })
           <div className="flex items-center justify-between font-mono text-xs">
             <span className="text-slate-400 text-[11px]">Click anywhere on the image to add polygon boundary points.</span>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSnapshotTime(Date.now())}
+                className="flex items-center gap-1 px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20 rounded-xl transition-all"
+                title="Refresh Reference Frame"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>REFRESH FRAME</span>
+              </button>
               <button
                 type="button"
                 onClick={handleUndo}

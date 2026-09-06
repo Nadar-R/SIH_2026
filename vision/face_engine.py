@@ -4,6 +4,7 @@ import time
 import json
 import urllib.request
 import logging
+import threading
 from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 
@@ -17,6 +18,7 @@ class FaceEngine:
     Whitelisted Familiar Face Recognition & Alert Suppression Engine.
     Uses OpenCV YuNet (Face Detection) + SFace (128-D Deep Feature Embedding) for accurate
     facial geometry identification and suppression of alarms for authorized staff.
+    Guarded by a thread lock to ensure safe concurrent access across worker pools and API requests.
     """
 
     def __init__(self, data_dir: str = "data/whitelisted_faces", models_dir: str = "data/models"):
@@ -28,6 +30,7 @@ class FaceEngine:
         self.db_json = os.path.join(self.data_dir, "whitelist.json")
         self.whitelisted_faces: List[Dict[str, Any]] = []
 
+        self.lock = threading.Lock()
         self.detector = None
         self.recognizer = None
         self.cascade = None
@@ -58,7 +61,7 @@ class FaceEngine:
         # Initialize YuNet & SFace via OpenCV DNN module
         try:
             if os.path.exists(yunet_path) and os.path.exists(sface_path) and hasattr(cv2, 'FaceDetectorYN'):
-                self.detector = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320), 0.4, 0.3, 5000)
+                self.detector = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320), 0.35, 0.25, 5000)
                 self.recognizer = cv2.FaceRecognizerSF.create(sface_path, "")
                 logger.info("OpenCV YuNet + SFace Deep Neural Face Engine initialized successfully.")
             else:
@@ -90,8 +93,10 @@ class FaceEngine:
 
     def _preprocess_crop(self, crop: np.ndarray) -> List[np.ndarray]:
         """
-        Generates multi-scale candidate face regions (upscaled + contrast enhanced)
-        to maximize YuNet detection recall across short, medium, and long ranges.
+        Generates candidates for YuNet face detection:
+        - Downscales huge uploads (e.g. 4032x3024 smartphone photos) to max 800px for speed & accuracy
+        - Provides full-image candidate (ideal for passport/portrait uploads or close-ups)
+        - Provides upper-body candidate (ideal for full-body pedestrian detections)
         """
         candidates = []
         if crop is None or crop.size == 0:
@@ -99,43 +104,34 @@ class FaceEngine:
 
         h, w = crop.shape[:2]
 
-        # Candidate 1: Head & Upper Torso (Top 60% of person bounding box)
-        head_h = max(int(h * 0.60), 20)
-        head_crop = crop[0:head_h, 0:w]
-        hh, hw = head_crop.shape[:2]
+        # Downscale oversized images so YuNet processes in 30ms instead of 40s
+        max_dim = max(h, w)
+        if max_dim > 800:
+            scale_down = 800.0 / max_dim
+            crop = cv2.resize(crop, (int(w * scale_down), int(h * scale_down)), interpolation=cv2.INTER_AREA)
+            h, w = crop.shape[:2]
 
-        scale_head = max(1.0, 160.0 / max(min(hh, hw), 1))
-        if scale_head > 1.0:
-            head_upscaled = cv2.resize(head_crop, (int(hw * scale_head), int(hh * scale_head)), interpolation=cv2.INTER_CUBIC)
-        else:
-            head_upscaled = head_crop.copy()
-        candidates.append(head_upscaled)
+        # Candidate 1: Full image candidate
+        candidates.append(crop)
 
-        # Candidate 2: Full Person Crop (Upscaled if small)
-        scale_full = max(1.0, 200.0 / max(min(h, w), 1))
-        if scale_full > 1.0:
-            full_upscaled = cv2.resize(crop, (int(w * scale_full), int(h * scale_full)), interpolation=cv2.INTER_CUBIC)
-        else:
-            full_upscaled = crop.copy()
-        candidates.append(full_upscaled)
-
-        # Candidate 3: CLAHE Contrast Enhanced Head Crop (for shadowy/distant facial features)
-        try:
-            lab = cv2.cvtColor(head_upscaled, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            cl = clahe.apply(l)
-            enhanced_lab = cv2.merge((cl, a, b))
-            enhanced_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
-            candidates.append(enhanced_bgr)
-        except Exception:
-            pass
+        # Candidate 2: Upper body / head region (top 65%) for pedestrian crops
+        if h > 40 and w > 20 and (h / max(w, 1)) > 1.2:
+            head_h = max(int(h * 0.65), 20)
+            head_crop = crop[0:head_h, 0:w]
+            hh, hw = head_crop.shape[:2]
+            scale_head = max(1.0, 160.0 / max(min(hh, hw), 1))
+            if scale_head > 1.0:
+                head_upscaled = cv2.resize(head_crop, (int(hw * scale_head), int(hh * scale_head)), interpolation=cv2.INTER_CUBIC)
+            else:
+                head_upscaled = head_crop.copy()
+            candidates.append(head_upscaled)
 
         return candidates
 
     def extract_face_embedding(self, img: np.ndarray) -> Optional[np.ndarray]:
         """
         Extracts 128-dimensional SFace neural feature vector from image crop.
+        Thread-safe: guarded by self.lock to prevent OpenCV DNN buffer corruption.
         """
         if img is None or img.size == 0:
             return None
@@ -144,20 +140,21 @@ class FaceEngine:
         if h < 15 or w < 15:
             return None
 
-        if self.detector is not None and self.recognizer is not None:
-            candidates = self._preprocess_crop(img)
-            for cand in candidates:
-                try:
-                    ch, cw = cand.shape[:2]
-                    self.detector.setInputSize((cw, ch))
-                    _, faces = self.detector.detect(cand)
-                    if faces is not None and len(faces) > 0:
-                        best_face = max(faces, key=lambda f: f[14] if len(f) > 14 else (f[2] * f[3]))
-                        aligned_face = self.recognizer.alignCrop(cand, best_face)
-                        feat = self.recognizer.feature(aligned_face)
-                        return feat
-                except Exception as e:
-                    logger.debug(f"YuNet/SFace feature extraction note: {e}")
+        with self.lock:
+            if self.detector is not None and self.recognizer is not None:
+                candidates = self._preprocess_crop(img)
+                for cand in candidates:
+                    try:
+                        ch, cw = cand.shape[:2]
+                        self.detector.setInputSize((cw, ch))
+                        _, faces = self.detector.detect(cand)
+                        if faces is not None and len(faces) > 0:
+                            best_face = max(faces, key=lambda f: f[14] if len(f) > 14 else (f[2] * f[3]))
+                            aligned_face = self.recognizer.alignCrop(cand, best_face)
+                            feat = self.recognizer.feature(aligned_face)
+                            return feat
+                    except Exception as e:
+                        logger.debug(f"YuNet/SFace feature extraction note: {e}")
 
         return None
 
@@ -169,42 +166,48 @@ class FaceEngine:
         if img is None:
             raise ValueError("Invalid image file uploaded.")
 
+        embedding = self.extract_face_embedding(img)
+        if embedding is None:
+            raise ValueError("No recognizable face detected in uploaded photo. Please upload a clear front-facing portrait photo.")
+
+        emb_list = embedding.flatten().tolist()
         face_id = f"face_{int(time.time()*1000)}"
         img_filename = f"{face_id}.jpg"
         img_path = os.path.join(self.data_dir, img_filename)
         cv2.imwrite(img_path, img)
 
-        embedding = self.extract_face_embedding(img)
-        emb_list = embedding.flatten().tolist() if embedding is not None else []
-
         profile = {
             "id": face_id,
             "name": person_name,
             "role": role,
-            "image_uri": f"/evidence/{img_filename}",
+            "image_uri": f"/whitelisted_faces/{img_filename}",
             "image_path": img_path,
             "embedding": emb_list,
             "created_at": time.time()
         }
 
-        self.whitelisted_faces.append(profile)
-        self._save_whitelist_db()
+        with self.lock:
+            self.whitelisted_faces.append(profile)
+            self._save_whitelist_db()
+
         logger.info(f"Added authorized familiar staff: '{person_name}' ({role}) with 128-D Deep Feature Embedding.")
         return profile
 
     def remove_whitelisted_person(self, face_id: str) -> bool:
-        initial_len = len(self.whitelisted_faces)
-        self.whitelisted_faces = [f for f in self.whitelisted_faces if f["id"] != face_id]
-        if len(self.whitelisted_faces) < initial_len:
-            self._save_whitelist_db()
-            logger.info(f"Removed staff face ID: {face_id} from whitelist database.")
-            return True
+        with self.lock:
+            initial_len = len(self.whitelisted_faces)
+            self.whitelisted_faces = [f for f in self.whitelisted_faces if f["id"] != face_id]
+            if len(self.whitelisted_faces) < initial_len:
+                self._save_whitelist_db()
+                logger.info(f"Removed staff face ID: {face_id} from whitelist database.")
+                return True
         return False
 
     def detect_and_match(self, person_crop: np.ndarray) -> Tuple[bool, Optional[str], float]:
         """
         Extracts face from person crop and compares against whitelisted profiles using Cosine Similarity.
         Returns: (is_whitelisted, person_name, match_confidence)
+        Thread-safe: protected by self.lock.
         """
         if not self.whitelisted_faces or person_crop is None or person_crop.size == 0:
             return False, None, 0.0
@@ -216,30 +219,32 @@ class FaceEngine:
         best_match_name = None
         best_score = -1.0
 
-        for profile in self.whitelisted_faces:
-            ref_vec = profile.get("embedding")
-            if not ref_vec:
-                continue
+        with self.lock:
+            for profile in self.whitelisted_faces:
+                ref_vec = profile.get("embedding")
+                if not ref_vec:
+                    continue
 
-            ref_arr = np.array(ref_vec, dtype=np.float32).reshape(1, -1)
+                ref_arr = np.array(ref_vec, dtype=np.float32).reshape(1, -1)
 
-            if self.recognizer is not None and ref_arr.shape == curr_emb.shape:
-                score = self.recognizer.match(curr_emb, ref_arr, cv2.FaceRecognizerSF_FR_COSINE)
-            else:
-                norm_curr = np.linalg.norm(curr_emb.flatten())
-                norm_ref = np.linalg.norm(ref_arr.flatten())
-                if norm_curr > 0 and norm_ref > 0:
-                    score = float(np.dot(curr_emb.flatten(), ref_arr.flatten()) / (norm_curr * norm_ref))
+                if self.recognizer is not None and ref_arr.shape == curr_emb.shape:
+                    score = self.recognizer.match(curr_emb, ref_arr, cv2.FaceRecognizerSF_FR_COSINE)
                 else:
-                    score = 0.0
+                    norm_curr = np.linalg.norm(curr_emb.flatten())
+                    norm_ref = np.linalg.norm(ref_arr.flatten())
+                    if norm_curr > 0 and norm_ref > 0:
+                        score = float(np.dot(curr_emb.flatten(), ref_arr.flatten()) / (norm_curr * norm_ref))
+                    else:
+                        score = 0.0
 
-            if score > best_score:
-                best_score = score
-                best_match_name = profile["name"]
+                if score > best_score:
+                    best_score = score
+                    best_match_name = profile["name"]
 
-        # Deep neural threshold for positive face match (Cosine Similarity >= 0.35 for SFace)
-        threshold = 0.35 if self.recognizer is not None else 0.65
+        # Deep neural threshold for positive face match (Cosine Similarity >= 0.30 for real-world SFace)
+        threshold = 0.30 if self.recognizer is not None else 0.65
         if best_score >= threshold:
             return True, best_match_name, round(float(best_score), 2)
 
         return False, None, 0.0
+

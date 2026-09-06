@@ -79,6 +79,7 @@ export default function AlertRail({ alerts, onAcknowledge, onViewEvidence }) {
                   <img
                     src={alert.evidence_uri}
                     alt="Evidence Snapshot"
+                    loading="lazy"
                     className="w-full h-24 object-cover group-hover:scale-105 transition-all duration-300"
                   />
                   <div className="absolute inset-0 bg-slate-950/40 group-hover:bg-slate-950/20 flex items-center justify-center transition-all opacity-0 group-hover:opacity-100">

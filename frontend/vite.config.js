@@ -23,6 +23,10 @@ export default defineConfig({
       '/evidence': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+      },
+      '/whitelisted_faces': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
       }
     }
   }

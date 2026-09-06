@@ -65,6 +65,7 @@ class EventResponse(BaseModel):
     severity: str
     status: str
     acknowledged_by: Optional[str] = None
+    license_plate: Optional[str] = None
 
 class PlaybackInfo(BaseModel):
     is_paused: bool = False

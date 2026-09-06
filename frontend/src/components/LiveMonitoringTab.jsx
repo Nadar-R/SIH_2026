@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, Edit3, RefreshCw, AlertTriangle, Play, Pause, Maximize2, HardDrive, Globe, Users, Car, Bike, Bus, Truck, Cpu } from 'lucide-react';
+import { Camera, Edit3, RefreshCw, AlertTriangle, Play, Pause, Maximize2, HardDrive, Globe, Users, Car, Bike, Bus, Truck, Cpu, ShieldCheck } from 'lucide-react';
 import AlertRail from './AlertRail';
 
 export default function LiveMonitoringTab({
@@ -10,10 +10,21 @@ export default function LiveMonitoringTab({
   onSwitchSource,
   onPlayPause,
   onSeek,
-  onGoToZoneDrawer
+  onGoToZoneDrawer,
+  onOpenWhitelistModal
 }) {
   const [streamKey, setStreamKey] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const containerRef = useRef(null);
+
+  const handleStreamError = () => {
+    if (retryCount < 5) {
+      setTimeout(() => {
+        setStreamKey(k => k + 1);
+        setRetryCount(r => r + 1);
+      }, 3000);
+    }
+  };
 
   const isOnline = health?.camera_status === 'ONLINE';
   const videoMode = health?.playback?.video_mode || 'webcam';
@@ -54,16 +65,16 @@ export default function LiveMonitoringTab({
     <div className="space-y-6">
       
       {/* Inline Toolbar Above Stream */}
-      <div className="glass-panel p-3.5 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
+      <div className="glass-panel p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
         
         {videoMode === 'webcam' ? (
           <div className="flex items-center gap-2.5">
-            <Camera className="w-4 h-4 text-cyan-400" />
-            <span className="text-slate-300 font-semibold">Active Camera Source:</span>
+            <Camera className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+            <span className="text-slate-700 dark:text-slate-300 font-semibold">Active Camera Source:</span>
             <select
               value={selectedWebcamIndex}
               onChange={handleWebcamChange}
-              className="bg-slate-950 border border-slate-700 text-cyan-400 font-bold px-3 py-1.5 rounded-xl focus:outline-none focus:border-cyan-500 shadow-sm"
+              className="bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-cyan-700 dark:text-cyan-400 font-bold px-3 py-1.5 rounded-xl focus:outline-none focus:border-cyan-500 shadow-sm"
             >
               <option value="0">💻 Inbuilt System Webcam (Device #0)</option>
               <option value="1">📷 External USB Webcam (Device #1)</option>
@@ -71,7 +82,7 @@ export default function LiveMonitoringTab({
             </select>
           </div>
         ) : (
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-bold">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-600 dark:text-cyan-400 font-bold">
             {videoMode === 'file' ? <HardDrive className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
             <span className="truncate max-w-md">
               {videoMode === 'file' ? `📁 Local Video File: ${health?.current_source}` : `🌐 Real RTSP Stream: ${health?.current_source}`}
@@ -81,8 +92,16 @@ export default function LiveMonitoringTab({
 
         <div className="flex items-center gap-3">
           <button
+            onClick={onOpenWhitelistModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-semibold hover:bg-emerald-500/20 transition-all shadow-sm"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>WHITELIST STAFF MANAGER</span>
+          </button>
+
+          <button
             onClick={onGoToZoneDrawer}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 font-semibold hover:bg-purple-500/20 transition-all shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 font-semibold hover:bg-purple-500/20 transition-all shadow-sm"
           >
             <Edit3 className="w-3.5 h-3.5" />
             <span>DRAW VIRTUAL FENCE ZONE</span>
@@ -90,7 +109,7 @@ export default function LiveMonitoringTab({
 
           <button
             onClick={() => setStreamKey(k => k + 1)}
-            className="p-2 bg-slate-900 border border-slate-800 text-slate-300 hover:text-white rounded-xl transition-all"
+            className="p-2 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white rounded-xl transition-all"
             title="Reconnect Stream"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -104,14 +123,14 @@ export default function LiveMonitoringTab({
         
         <div className="lg:col-span-2 space-y-4">
           
-          {/* Stream Player Container (Clean Video Overlay with NO Green HUD Bar) */}
+          {/* Stream Player Container */}
           <div
             ref={containerRef}
-            className="glass-panel rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col min-h-[440px] relative group"
+            className="glass-panel rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col min-h-[440px] relative group"
           >
             
             {/* Header Bar overlay */}
-            <div className="px-4 py-2.5 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between text-xs font-mono">
+            <div className="px-4 py-2.5 bg-slate-900/90 dark:bg-slate-950/90 border-b border-slate-800 flex items-center justify-between text-xs font-mono">
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-400 pulse-dot' : 'bg-rose-500'}`} />
                 <span className="text-white font-bold">LIVE STREAM FEED #1</span>
@@ -129,15 +148,15 @@ export default function LiveMonitoringTab({
               </div>
             </div>
 
-            {/* Clean Video Frame (Green Bar Removed) */}
+            {/* Clean Video Frame */}
             <div className="relative w-full flex-1 bg-slate-950 flex items-center justify-center overflow-hidden min-h-[380px]">
               {isOnline ? (
                 <img
                   key={streamKey}
-                  src={`/video_feed?key=${streamKey}`}
+                  src={window.location.port === '3000' ? `http://${window.location.hostname}:8000/video_feed?key=${streamKey}` : `/video_feed?key=${streamKey}`}
                   alt="IBVAP Live AI CCTV Stream"
                   className="w-full h-full object-contain max-h-[640px]"
-                  onError={() => setTimeout(() => setStreamKey(k => k + 1), 2000)}
+                  onError={handleStreamError}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
@@ -149,7 +168,7 @@ export default function LiveMonitoringTab({
                     Unable to connect to camera source. Verify URL or device index in Camera Sources tab.
                   </p>
                   <button
-                    onClick={() => setStreamKey(k => k + 1)}
+                    onClick={() => { setRetryCount(0); setStreamKey(k => k + 1); }}
                     className="mt-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20 rounded-xl text-xs font-mono font-bold transition-all"
                   >
                     RECONNECT STREAM
@@ -159,11 +178,11 @@ export default function LiveMonitoringTab({
             </div>
 
             {/* Player Controls Bar */}
-            <div className="px-4 py-3 bg-slate-950/95 border-t border-slate-800/80 font-mono text-xs space-y-2">
+            <div className="px-4 py-3 bg-slate-900/95 dark:bg-slate-950/95 border-t border-slate-800/80 font-mono text-xs space-y-2">
               <div className="flex items-center justify-between gap-4">
                 <button
                   onClick={onPlayPause}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-400 rounded-xl font-bold transition-all"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 dark:bg-slate-900 hover:bg-slate-700 dark:hover:bg-slate-800 border border-slate-700 text-cyan-400 rounded-xl font-bold transition-all"
                 >
                   {isPaused ? <Play className="w-4 h-4 text-emerald-400" /> : <Pause className="w-4 h-4 text-amber-400" />}
                   <span>{isPaused ? 'PLAY' : 'PAUSE'}</span>
@@ -171,7 +190,7 @@ export default function LiveMonitoringTab({
 
                 <button
                   onClick={handleFullscreenToggle}
-                  className="p-1.5 bg-slate-900 border border-slate-800 text-slate-300 hover:text-white rounded-xl transition-all"
+                  className="p-1.5 bg-slate-800 dark:bg-slate-900 border border-slate-700 dark:border-slate-800 text-slate-300 hover:text-white rounded-xl transition-all"
                   title="Fullscreen Stream"
                 >
                   <Maximize2 className="w-4 h-4" />
@@ -202,66 +221,66 @@ export default function LiveMonitoringTab({
 
           </div>
 
-          {/* Active Detected Entities Breakdown Panel (Displayed Outside Video Player) */}
-          <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-3 font-mono text-xs">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+          {/* Active Detected Entities Breakdown Panel */}
+          <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 font-mono text-xs">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800/80 pb-2.5">
               <div className="flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-purple-400" />
-                <h3 className="font-bold text-white font-heading">Active Detected Entities Breakdown</h3>
+                <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <h3 className="font-bold text-slate-900 dark:text-white font-heading">Active Detected Entities Breakdown</h3>
               </div>
-              <span className="bg-purple-500/10 text-purple-400 border border-purple-500/30 px-2.5 py-0.5 rounded-full font-bold">
+              <span className="bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/30 px-2.5 py-0.5 rounded-full font-bold">
                 {activeTracksCount} ENTITIES TRACKED
               </span>
             </div>
 
             {/* Category Breakdown Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 pt-1">
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-rose-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-rose-500 dark:text-rose-400">
                   <Users className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">PERSON</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">PERSON</span>
                 </div>
-                <span className="font-bold text-rose-400 text-sm">{entityCounts["person"] || 0}</span>
+                <span className="font-bold text-rose-600 dark:text-rose-400 text-sm">{entityCounts["person"] || 0}</span>
               </div>
 
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-amber-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-500 dark:text-amber-400">
                   <Car className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">CAR</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">CAR</span>
                 </div>
-                <span className="font-bold text-amber-400 text-sm">{entityCounts["car"] || 0}</span>
+                <span className="font-bold text-amber-600 dark:text-amber-400 text-sm">{entityCounts["car"] || 0}</span>
               </div>
 
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-yellow-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-yellow-600 dark:text-yellow-400">
                   <Bike className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">BIKE</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">BIKE</span>
                 </div>
-                <span className="font-bold text-yellow-400 text-sm">{entityCounts["motorcycle"] || 0}</span>
+                <span className="font-bold text-yellow-600 dark:text-yellow-400 text-sm">{entityCounts["motorcycle"] || 0}</span>
               </div>
 
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-purple-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400">
                   <Bus className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">BUS</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">BUS</span>
                 </div>
-                <span className="font-bold text-purple-400 text-sm">{entityCounts["bus"] || 0}</span>
+                <span className="font-bold text-purple-600 dark:text-purple-400 text-sm">{entityCounts["bus"] || 0}</span>
               </div>
 
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-orange-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
                   <Truck className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">TRUCK</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">TRUCK</span>
                 </div>
-                <span className="font-bold text-orange-400 text-sm">{entityCounts["truck"] || 0}</span>
+                <span className="font-bold text-orange-600 dark:text-orange-400 text-sm">{entityCounts["truck"] || 0}</span>
               </div>
 
-              <div className="bg-slate-950/70 border border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
-                <div className="flex items-center gap-2 text-cyan-400">
+              <div className="bg-slate-100 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800/80 p-2.5 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2 text-cyan-600 dark:text-cyan-400">
                   <Bike className="w-4 h-4" />
-                  <span className="font-semibold text-slate-300">BICYCLE</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">BICYCLE</span>
                 </div>
-                <span className="font-bold text-cyan-400 text-sm">{entityCounts["bicycle"] || 0}</span>
+                <span className="font-bold text-cyan-600 dark:text-cyan-400 text-sm">{entityCounts["bicycle"] || 0}</span>
               </div>
             </div>
           </div>

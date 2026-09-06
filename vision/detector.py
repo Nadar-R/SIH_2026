@@ -1,3 +1,4 @@
+import cv2
 import logging
 from typing import List, Dict, Any
 import numpy as np
@@ -19,7 +20,12 @@ TARGET_CLASSES = {
 }
 
 class ObjectDetector:
-    def __init__(self, model_name: str = "yolov8n.pt", conf_threshold: float = 0.35):
+    """
+    High-Accuracy AI Multi-Class Object Detector (YOLOv8).
+    Detects pedestrians, fast-moving vehicles, and border intrusion entities.
+    """
+
+    def __init__(self, model_name: str = "yolov8n.pt", conf_threshold: float = 0.25):
         self.model_name = model_name
         self.conf_threshold = conf_threshold
         self.model = None
@@ -39,7 +45,7 @@ class ObjectDetector:
             raise e
 
     def detect(self, frame: np.ndarray) -> List[Dict[str, Any]]:
-        if self.model is None or frame is None:
+        if self.model is None or frame is None or frame.size == 0:
             return []
 
         try:
@@ -47,6 +53,7 @@ class ObjectDetector:
                 source=frame,
                 conf=self.conf_threshold,
                 classes=list(TARGET_CLASSES.keys()),
+                imgsz=640,
                 verbose=False
             )
             

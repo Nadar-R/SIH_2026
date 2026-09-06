@@ -50,7 +50,7 @@ export default function LiveStream({ isOnline, onOpenZoneEditor }) {
         {isOnline ? (
           <img
             key={streamKey}
-            src={`/video_feed?key=${streamKey}`}
+            src={window.location.port === '3000' ? `http://${window.location.hostname}:8000/video_feed?key=${streamKey}` : `/video_feed?key=${streamKey}`}
             alt="IBVAP Live AI CCTV Feed"
             className="w-full h-full object-contain max-h-[640px]"
             onError={() => {

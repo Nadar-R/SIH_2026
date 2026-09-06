@@ -5,10 +5,6 @@ from shapely.geometry import Point, Polygon
 
 logger = logging.getLogger(__name__)
 
-def get_bottom_center(bbox: List[float]) -> Tuple[float, float]:
-    x1, y1, x2, y2 = bbox
-    return ((x1 + x2) / 2.0, y2)
-
 class RuleEngine:
     def __init__(self, rules_config: List[Dict[str, Any]] = None):
         self.rules = rules_config or []
@@ -30,7 +26,8 @@ class RuleEngine:
             class_name = obj["class_name"]
             confidence = obj["confidence"]
 
-            px, py = get_bottom_center(bbox)
+            x1, y1, x2, y2 = bbox
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
 
             if track_id not in self.track_history:
                 self.track_history[track_id] = {
@@ -51,7 +48,7 @@ class RuleEngine:
                 if class_name not in allowed_classes:
                     continue
 
-                min_conf = rule.get("min_confidence", 0.40)
+                min_conf = rule.get("min_confidence", 0.35)
                 if confidence < min_conf:
                     continue
 
@@ -67,9 +64,10 @@ class RuleEngine:
 
                 try:
                     poly = Polygon(poly_points)
-                    point = Point(px, py)
+                    # Full Bounding Box Polygon: Triggers alarm if ANY part of the bounding box intersects the restricted zone
+                    box_poly = Polygon([(x1, y1), (x2, y1), (x2, y2), (x1, y2)])
 
-                    inside_now = poly.contains(point) or poly.touches(point)
+                    inside_now = poly.intersects(box_poly) or poly.contains(box_poly)
 
                     min_frames = rule.get("min_frames", 2)
                     cooldown = rule.get("cooldown_seconds", 5)
@@ -92,12 +90,12 @@ class RuleEngine:
                                 "track_id": track_id,
                                 "confidence": confidence,
                                 "bbox": bbox,
-                                "anchor_point": [round(px, 1), round(py, 1)],
+                                "anchor_point": [round(cx, 1), round(cy, 1)],
                                 "severity": rule.get("severity", "HIGH"),
                                 "timestamp": now
                             }
                             triggered_events.append(event_payload)
-                            logger.warning(f"INTRUSION DETECTED! Rule '{rule_id}' triggered by {class_name} (Track #{track_id})")
+                            logger.warning(f"INTRUSION DETECTED! Rule '{rule_id}' triggered by {class_name} (Track #{track_id}) - Bounding Box Intersects Zone")
                     else:
                         hist["frame_counts"][rule_id] = 0
 
